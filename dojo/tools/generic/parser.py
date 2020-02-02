@@ -1,11 +1,12 @@
-import StringIO
+import io
 import csv
 import hashlib
 from dojo.models import Finding, Endpoint
 from dateutil.parser import parse
 import re
-from urlparse import urlparse
+from urllib.parse import urlparse
 import socket
+
 
 class ColumnMappingStrategy(object):
 
@@ -92,7 +93,7 @@ class UrlColumnMappingStrategy(ColumnMappingStrategy):
         ParseResult(scheme='http', netloc='www.cwi.nl:80', path='/%7Eguido/Python.html',
                     params='', query='', fragment='')
         """
-        if self.is_valid_ipv4_address(url) == False:
+        if self.is_valid_ipv4_address(url) is False:
             rhost = re.search(
                 "(http|https|ftp)\://([a-zA-Z0-9\.\-]+(\:[a-zA-Z0-9\.&amp;%\$\-]+)*@)*((25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9])\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[0-9])|localhost|([a-zA-Z0-9\-]+\.)*[a-zA-Z0-9\-]+\.(com|edu|gov|int|mil|net|org|biz|arpa|info|name|pro|aero|coop|museum|[a-zA-Z]{2}))[\:]*([0-9]+)*([/]*($|[a-zA-Z0-9\.\,\?\'\\\+&amp;%\$#\=~_\-]+)).*?$",
                 url)
@@ -138,8 +139,8 @@ class UrlColumnMappingStrategy(ColumnMappingStrategy):
 
                 finding.unsaved_endpoints = endpoints
 
-        #URL is an IP so save as an IP endpoint
-        elif self.is_valid_ipv4_address(url) == True:
+        # URL is an IP so save as an IP endpoint
+        elif self.is_valid_ipv4_address(url) is True:
             try:
                 dupe_endpoint = Endpoint.objects.get(protocol=None,
                                                      host=url,
@@ -156,8 +157,6 @@ class UrlColumnMappingStrategy(ColumnMappingStrategy):
                 endpoints = [dupe_endpoint]
 
             finding.unsaved_endpoints = endpoints
-
-
 
 
 class SeverityColumnMappingStrategy(ColumnMappingStrategy):
@@ -296,21 +295,23 @@ class GenericFindingUploadCsvParser(object):
             self.column_names[index] = column
             index += 1
 
-    def __init__(self, filename, test):
+    def __init__(self, filename, test, active, verified):
         self.chain = None
         self.column_names = dict()
         self.dupes = dict()
         self.items = ()
         self.create_chain()
-
+        self.active = active
+        self.verified = verified
         if filename is None:
             self.items = ()
             return
 
         content = filename.read()
-
+        if type(content) is bytes:
+            content = content.decode('utf-8')
         row_number = 0
-        reader = csv.reader(StringIO.StringIO(content), delimiter=',', quotechar='"')
+        reader = csv.reader(io.StringIO(content), delimiter=',', quotechar='"')
         for row in reader:
             finding = Finding(test=test)
 
@@ -322,14 +323,23 @@ class GenericFindingUploadCsvParser(object):
             column_number = 0
             for column in row:
                 self.chain.process_column(self.column_names[column_number], column, finding)
+
                 column_number += 1
 
+            if self.active:
+                finding.active = ActiveColumnMappingStrategy.evaluate_bool_value(row[9])
+            else:
+                finding.active = False
+            if self.verified:
+                finding.verified = VerifiedColumnMappingStrategy.evaluate_bool_value(row[10])
+            else:
+                finding.verified = False
             if finding is not None:
-                key = hashlib.md5(finding.severity + '|' + finding.title + '|' + finding.description).hexdigest()
+                key = hashlib.md5((finding.severity + '|' + finding.title + '|' + finding.description).encode("utf-8")).hexdigest()
 
                 if key not in self.dupes:
                     self.dupes[key] = finding
 
             row_number += 1
 
-        self.items = self.dupes.values()
+        self.items = list(self.dupes.values())

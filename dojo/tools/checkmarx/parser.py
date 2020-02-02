@@ -59,7 +59,7 @@ class CheckmarxXMLParser(object):
                 deeplink = "[{}]({})".format(result.get('DeepLink'), result.get('DeepLink'))
                 findingdetail = "{}**Finding Link:** {}\n\n".format(findingdetail, deeplink)
 
-                dupe_key = "{}{}{}{}".format(categories, cwe, name, result.get('FileName'))
+                dupe_key = "{}{}{}{}".format(categories, cwe, name, result.get('FileName').encode('utf-8'))
 
                 if dupe_key in dupes:
                     find = dupes[dupe_key]
@@ -95,7 +95,7 @@ class CheckmarxXMLParser(object):
         for lang in self.language_list:
             add_language(test.engagement.product, lang)
 
-        self.items = dupes.values()
+        self.items = list(dupes.values())
 
     def get_finding_detail(self, query, result):
         findingdetail = ""
@@ -106,9 +106,15 @@ class CheckmarxXMLParser(object):
             for pathnode in path.findall('PathNode'):
                 result_dupes_key = pathnode.find('Line').text + "|" + pathnode.find('Column').text
                 if result_dupes_key not in self.result_dupes:
-                    findingdetail = "{}**Line Number:** {}\n".format(findingdetail, pathnode.find('Line').text)
-                    findingdetail = "{}**Column:** {}\n".format(findingdetail, pathnode.find('Column').text)
-                    findingdetail = "{}**Source Object:** {}\n".format(findingdetail, pathnode.find('Name').text)
+
+                    if pathnode.find('Line').text is not None:
+                        findingdetail = "{}**Line Number:** {}\n".format(findingdetail, pathnode.find('Line').text)
+
+                    if pathnode.find('Column').text is not None:
+                        findingdetail = "{}**Column:** {}\n".format(findingdetail, pathnode.find('Column').text)
+
+                    if pathnode.find('Name').text is not None:
+                        findingdetail = "{}**Source Object:** {}\n".format(findingdetail, pathnode.find('Name').text)
 
                     for codefragment in pathnode.findall('Snippet/Line'):
                         findingdetail = "{}**Number:** {}\n**Code:** {}\n".format(findingdetail, codefragment.find('Number').text, codefragment.find('Code').text.strip())

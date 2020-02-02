@@ -1,14 +1,11 @@
-from __future__ import with_statement
-
 import json
-import re
 from base64 import b64encode
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 import html2text
 
 from dojo.models import Finding, Endpoint
-from django.utils.encoding import smart_text, force_str
+from django.utils.encoding import force_str
 
 __author__ = "Jay Paz"
 
@@ -27,7 +24,11 @@ class ArachniJSONParser(object):
 
     def parse_json(self, json_output):
         try:
-            tree = json.load(json_output)
+            data = json_output.read()
+            try:
+                tree = json.loads(str(data, 'utf-8'))
+            except:
+                tree = json.loads(data)
         except:
             raise Exception("Invalid format")
 
@@ -59,7 +60,7 @@ class ArachniJSONParser(object):
             else:
                 items[dupe_key] = item
 
-        return items.values()
+        return list(items.values())
 
 
 def do_clean(value):
@@ -85,9 +86,9 @@ def get_item(item_node, test):
                 params='', query='', fragment='')
     """
 
-    rhost = re.search(
-        "(http|https|ftp)\://([a-zA-Z0-9\.\-]+(\:[a-zA-Z0-9\.&amp;%\$\-]+)*@)*((25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9])\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[0-9])|localhost|([a-zA-Z0-9\-]+\.)*[a-zA-Z0-9\-]+\.(com|edu|gov|int|mil|net|org|biz|arpa|info|name|pro|aero|coop|museum|[a-zA-Z]{2}))[\:]*([0-9]+)*([/]*($|[a-zA-Z0-9\.\,\?\'\\\+&amp;%\$#\=~_\-]+)).*?$",
-        url)
+    # rhost = re.search(
+    #     "(http|https|ftp)\://([a-zA-Z0-9\.\-]+(\:[a-zA-Z0-9\.&amp;%\$\-]+)*@)*((25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9])\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[1-9]|0)\.(25[0-5]|2[0-4][0-9]|[0-1]{1}[0-9]{2}|[1-9]{1}[0-9]{1}|[0-9])|localhost|([a-zA-Z0-9\-]+\.)*[a-zA-Z0-9\-]+\.(com|edu|gov|int|mil|net|org|biz|arpa|info|name|pro|aero|coop|museum|[a-zA-Z]{2}))[\:]*([0-9]+)*([/]*($|[a-zA-Z0-9\.\,\?\'\\\+&amp;%\$#\=~_\-]+)).*?$",
+    #     url)
     protocol = o.scheme
     host = o.netloc
     path = o.path
@@ -98,21 +99,23 @@ def get_item(item_node, test):
     if protocol == 'https':
         port = 443
 
-    if rhost.group(11) is not None:
-        port = rhost.group(11)
+    # if rhost.group(11) is not None:
+    #     port = rhost.group(11)
+    if o.port is not None:
+        port = o.port
 
     request = item_node['request']
     #
     req = ''
     #
-    for key, value in request.iteritems():
+    for key, value in request.items():
         req += str(key) + ": " + str(value) + "\n\n"
     #
     respz = item_node['response']
 
     resp = ''
 
-    for key, value in respz.iteritems():
+    for key, value in respz.items():
         if key != 'body':
             resp += str(key) + ": " + str(value) + "\n\n"
 
@@ -120,7 +123,7 @@ def get_item(item_node, test):
     unsaved_req_resp = list()
 
     if request is not None and respz is not None:
-        unsaved_req_resp.append({"req": b64encode(req), "resp": b64encode(resp)})
+        unsaved_req_resp.append({"req": b64encode(req.encode("utf-8")), "resp": b64encode(resp.encode("utf-8"))})
 
     try:
         dupe_endpoint = Endpoint.objects.get(protocol=protocol,
@@ -155,7 +158,7 @@ def get_item(item_node, test):
     if remediation:
         remediation = html2text.html2text(remediation)
 
-    references = item_node['references'].values() if 'references' in item_node else None
+    references = list(item_node['references'].values()) if 'references' in item_node else None
     references = '<br/><br/>'.join(reference for reference in references)
 
     if references:

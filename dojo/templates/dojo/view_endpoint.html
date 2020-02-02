@@ -5,6 +5,9 @@
 {% block add_styles %}
     .graph {min-height: 158px;}
     h3 { margin-top: 5px; margin-bottom: 5px; font-size: 20px; line-height: 22px;}
+    .tooltip-inner {
+      max-width: 650px;
+    }
 {% endblock %}
 {% block content %}
     <div class="panel panel-default">
@@ -12,6 +15,11 @@
             <div class="clearfix">
                 <h4 class="pull-left to_highlight finding-title">
                     {{ endpoint.host_no_port }}
+                    {% if endpoint.remediated %}
+                        - Remediated
+                    {% else %}
+                        - Vulnerable
+                    {% endif %}
                     <span class="text-muted endpoint_product">
                         <a href="{% url 'view_product' endpoint.product.id %}">{{ endpoint.product }}</a>
                     </span>
@@ -133,7 +141,7 @@
 
     <div class="panel panel-default endpoints table-responsive">
         <div class="panel-heading">
-            {% if vulnerable %}
+            {% if vulnerable and not endpoint.remediated %}
             <h4>Vulnerable Services</h4>
             {% else %}
             <h4>Endpoints Services</h4>
@@ -145,7 +153,7 @@
                 {% for row in grouped_items %}
                     <tr>
                         {% for item in row %}
-                            <td>{% if item %}<i class="fa fa-circle"></i> {{ item }}{% endif %}
+                            <td>{% if item %}<i class="fa fa-circle"></i> <a data-toggle="tooltip" data-placement="top" data-original-title="{{ item }}" href="#">{{ item|url_shortner }}</a>{% endif %}
                             </td>
                         {% endfor %}
                     </tr>
@@ -259,6 +267,7 @@
     <script src="{% static "flot-axis/jquery.flot.axislabels.js" %}"></script>
     <script type="text/javascript">
         $(function () {
+            $('[data-toggle="tooltip"]').tooltip();
             $(document).on('click', '.panel-heading button.clickable', function (e) {
                 var $this = $(this);
                 if (!$this.hasClass('panel-collapsed')) {

@@ -41,7 +41,7 @@
                 }
 
                 var mde = new SimpleMDE({
-                    spellChecker: false,
+                    spellChecker: true,
                     element: elem,
                     autofocus: false,
                     forceSync: true,
@@ -54,9 +54,6 @@
                 });
                 mde.render();
             });
-            $('#id_product_manager').chosen({'placeholder_text_single': 'Select a Product Manager...'});
-            $('#id_team_manager').chosen({'placeholder_text_single': 'Select a Team Manager...'});
-            $('#id_technical_contact').chosen({'placeholder_text_single': 'Select a Technical Contact...'});
             $('#id_authorized_users').chosen({'placeholder_text_multiple': 'Select some users...'});
             $('#id_tags').chosen({
                 'placeholder_text_multiple': 'Select or add some tags...',
@@ -67,7 +64,8 @@
                 var stroke;
                 stroke = (_ref = evt.which) != null ? _ref : evt.keyCode;
                 if (stroke == 9) { // 9 = tab key
-                    $('#id_tags').append('<option value="' + $(this).val() + '" selected="selected">' + $(this).val() + '</option>');
+                    var o = new Option($(this).val(), $(this).val(), true, true);
+			        $("#id_tags").append(o);
                     $('#id_tags').trigger('chosen:updated');
                     $('#id_tags').focus();
                     return false;

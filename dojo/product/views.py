@@ -8,18 +8,21 @@ from dateutil.relativedelta import relativedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.core.exceptions import PermissionDenied
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.http import HttpResponseRedirect
 from django.shortcuts import render, get_object_or_404
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
+from django.contrib.admin.utils import NestedObjects
+from django.db import DEFAULT_DB_ALIAS
+from dojo.templatetags.display_tags import get_level
 from dojo.filters import ProductFilter, ProductFindingFilter, EngagementFilter
-from dojo.forms import ProductForm, EngForm, DeleteProductForm, ProductMetaDataForm, JIRAPKeyForm, JIRAFindingForm, AdHocFindingForm, \
+from dojo.forms import ProductForm, EngForm, DeleteProductForm, DojoMetaDataForm, JIRAPKeyForm, JIRAFindingForm, AdHocFindingForm, \
                        EngagementPresetsForm, DeleteEngagementPresetsForm
 from dojo.models import Product_Type, Finding, Product, Engagement, ScanSettings, Risk_Acceptance, Test, JIRA_PKey, Finding_Template, \
     Tool_Product_Settings, Cred_Mapping, Test_Type, System_Settings, Languages, App_Analysis, Benchmark_Type, Benchmark_Product_Summary, \
-    Endpoint, Engagement_Presets
+    Endpoint, Engagement_Presets, DojoMeta
 from dojo.utils import get_page_items, add_breadcrumb, get_punchcard_data, get_system_setting, create_notification, Product_Tab
 from custom_field.models import CustomFieldValue, CustomField
 from dojo.tasks import add_epic_task, add_issue_task
@@ -81,16 +84,13 @@ def view_product(request, pid):
     app_analysis = App_Analysis.objects.filter(product=prod).order_by('name')
     benchmark_type = Benchmark_Type.objects.filter(enabled=True).order_by('name')
     benchmarks = Benchmark_Product_Summary.objects.filter(product=prod, publish=True, benchmark_type__enabled=True).order_by('benchmark_type__name')
+    benchAndPercent = []
+    for i in range(0, len(benchmarks)):
+        benchAndPercent.append([benchmarks[i].benchmark_type, get_level(benchmarks[i])])
+
     system_settings = System_Settings.objects.get()
 
-    ct = ContentType.objects.get_for_model(prod)
-    product_cf = CustomField.objects.filter(content_type=ct).order_by('name')
-    product_metadata = {}
-
-    for cf in product_cf:
-        cfv = CustomFieldValue.objects.filter(field=cf, object_id=prod.id)
-        if len(cfv):
-            product_metadata[cf.name] = cfv[0].value
+    product_metadata = dict(prod.product_meta.order_by('name').values_list('name', 'value'))
 
     verified_findings = Finding.objects.filter(test__engagement__product=prod,
                                                 false_p=False,
@@ -120,7 +120,6 @@ def view_product(request, pid):
     total = critical + high + medium + low + info
 
     product_tab = Product_Tab(pid, title="Product", tab="overview")
-
     return render(request, 'dojo/view_product_details.html', {
                   'prod': prod,
                   'product_tab': product_tab,
@@ -136,6 +135,8 @@ def view_product(request, pid):
                   'langSummary': langSummary,
                   'app_analysis': app_analysis,
                   'system_settings': system_settings,
+                  'benchmarks_percents': benchAndPercent,
+                  'benchmarks': benchmarks,
                   'authorized': auth})
 
 
@@ -211,6 +212,29 @@ def view_product_metrics(request, pid):
                                              duplicate=False,
                                              out_of_scope=False,
                                              mitigated__isnull=False)
+
+    open_vulnerabilities = Finding.objects.filter(
+        test__engagement__product=prod,
+        false_p=False,
+        verified=True,
+        duplicate=False,
+        out_of_scope=False,
+        active=True,
+        mitigated__isnull=True,
+    ).order_by('cwe').values(
+        'cwe'
+    ).annotate(
+        count=Count('cwe')
+    )
+
+    all_vulnerabilities = Finding.objects.filter(
+        test__engagement__product=prod,
+        duplicate=False,
+    ).order_by('cwe').values(
+        'cwe'
+    ).annotate(
+        count=Count('cwe')
+    )
 
     start_date = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
 
@@ -314,6 +338,8 @@ def view_product_metrics(request, pid):
                    'closed_findings': closed_findings,
                    'accepted_findings': accepted_findings,
                    'new_findings': new_verified_findings,
+                   'open_vulnerabilities': open_vulnerabilities,
+                   'all_vulnerabilities': all_vulnerabilities,
                    'start_date': start_date,
                    'punchcard': punchcard,
                    'ticks': ticks,
@@ -404,14 +430,7 @@ def view_product_details(request, pid):
         # will render 403
         raise PermissionDenied
 
-    ct = ContentType.objects.get_for_model(prod)
-    product_cf = CustomField.objects.filter(content_type=ct)
-    product_metadata = {}
-
-    for cf in product_cf:
-        cfv = CustomFieldValue.objects.filter(field=cf, object_id=prod.id)
-        if len(cfv):
-            product_metadata[cf.name] = cfv[0].value
+    product_metadata = dict(prod.product_meta.values_list('name', 'value'))
 
     add_breadcrumb(parent=product, title="Details", top_level=False, request=request)
     return render(request,
@@ -437,7 +456,7 @@ def new_product(request):
     if request.method == 'POST':
         form = ProductForm(request.POST, instance=Product())
         if get_system_setting('enable_jira'):
-                jform = JIRAPKeyForm(request.POST, instance=JIRA_PKey())
+            jform = JIRAPKeyForm(request.POST, instance=JIRA_PKey())
         else:
             jform = None
 
@@ -451,21 +470,21 @@ def new_product(request):
                                  'Product added successfully.',
                                  extra_tags='alert-success')
             if get_system_setting('enable_jira'):
-                    if jform.is_valid():
-                        jira_pkey = jform.save(commit=False)
-                        if jira_pkey.conf is not None:
-                            jira_pkey.product = product
-                            jira_pkey.save()
-                            messages.add_message(request,
-                                                 messages.SUCCESS,
-                                                 'JIRA information added successfully.',
-                                                 extra_tags='alert-success')
-            create_notification(event='product_added', title=product.name, url=request.build_absolute_uri(reverse('view_product', args=(product.id,))))
+                if jform.is_valid():
+                    jira_pkey = jform.save(commit=False)
+                    if jira_pkey.conf is not None:
+                        jira_pkey.product = product
+                        jira_pkey.save()
+                        messages.add_message(request,
+                                                messages.SUCCESS,
+                                                'JIRA information added successfully.',
+                                                extra_tags='alert-success')
+            create_notification(event='product_added', title=product.name, url=reverse('view_product', args=(product.id,)))
             return HttpResponseRedirect(reverse('view_product', args=(product.id,)))
     else:
         form = ProductForm()
         if get_system_setting('enable_jira'):
-                jform = JIRAPKeyForm()
+            jform = JIRAPKeyForm()
         else:
             jform = None
     add_breadcrumb(title="New Product", top_level=False, request=request)
@@ -547,13 +566,6 @@ def delete_product(request, pid):
     product = get_object_or_404(Product, pk=pid)
     form = DeleteProductForm(instance=product)
 
-    from django.contrib.admin.utils import NestedObjects
-    from django.db import DEFAULT_DB_ALIAS
-
-    collector = NestedObjects(using=DEFAULT_DB_ALIAS)
-    collector.collect([product])
-    rels = collector.nested()
-
     if request.method == 'POST':
         if 'id' in request.POST and str(product.id) == request.POST['id']:
             form = DeleteProductForm(request.POST, instance=product)
@@ -565,7 +577,16 @@ def delete_product(request, pid):
                                      messages.SUCCESS,
                                      'Product and relationships removed.',
                                      extra_tags='alert-success')
+                create_notification(event='other',
+                                    title='Deletion of %s' % product.name,
+                                    description='The product "%s" was deleted by %s' % (product.name, request.user),
+                                    url=request.build_absolute_uri(reverse('product')),
+                                    icon="exclamation-triangle")
                 return HttpResponseRedirect(reverse('product'))
+
+    collector = NestedObjects(using=DEFAULT_DB_ALIAS)
+    collector.collect([product])
+    rels = collector.nested()
 
     product_tab = Product_Tab(pid, title="Product", tab="settings")
     return render(request, 'dojo/delete_product.html',
@@ -628,20 +649,20 @@ def new_eng_for_app(request, pid, cicd=False):
             t = ", ".join(tags)
             new_eng.tags = t
             if get_system_setting('enable_jira'):
-                    # Test to make sure there is a Jira project associated the product
-                    try:
-                        jform = JIRAFindingForm(request.POST, prefix='jiraform', enabled=JIRA_PKey.objects.get(product=prod).push_all_issues)
-                        if jform.is_valid():
-                            add_epic_task.delay(new_eng, jform.cleaned_data.get('push_to_jira'))
-                    except JIRA_PKey.DoesNotExist:
-                        pass
+                # Test to make sure there is a Jira project associated the product
+                try:
+                    jform = JIRAFindingForm(request.POST, prefix='jiraform', enabled=JIRA_PKey.objects.get(product=prod).push_all_issues)
+                    if jform.is_valid():
+                        add_epic_task.delay(new_eng, jform.cleaned_data.get('push_to_jira'))
+                except JIRA_PKey.DoesNotExist:
+                    pass
 
             messages.add_message(request,
                                  messages.SUCCESS,
                                  'Engagement added successfully.',
                                  extra_tags='alert-success')
 
-            create_notification(event='engagement_added', title=new_eng.name + " for " + prod.name, engagement=new_eng, url=request.build_absolute_uri(reverse('view_engagement', args=(new_eng.id,))), objowner=new_eng.lead)
+            create_notification(event='engagement_added', title=new_eng.name + " for " + prod.name, engagement=new_eng, url=reverse('view_engagement', args=(new_eng.id,)), objowner=new_eng.lead)
 
             if "_Add Tests" in request.POST:
                 return HttpResponseRedirect(reverse('add_tests', args=(new_eng.id,)))
@@ -652,8 +673,8 @@ def new_eng_for_app(request, pid, cicd=False):
     else:
         form = EngForm(initial={'lead': request.user, 'target_start': timezone.now().date(), 'target_end': timezone.now().date() + timedelta(days=7)}, cicd=cicd, product=prod.id)
         if(get_system_setting('enable_jira')):
-                if JIRA_PKey.objects.filter(product=prod).count() != 0:
-                    jform = JIRAFindingForm(prefix='jiraform', enabled=JIRA_PKey.objects.get(product=prod).push_all_issues)
+            if JIRA_PKey.objects.filter(product=prod).count() != 0:
+                jform = JIRAFindingForm(prefix='jiraform', enabled=JIRA_PKey.objects.get(product=prod).push_all_issues)
 
     product_tab = Product_Tab(pid, title="New Engagement", tab="engagements")
     return render(request, 'dojo/new_eng.html',
@@ -671,16 +692,10 @@ def new_eng_for_app_cicd(request, pid):
 @user_passes_test(lambda u: u.is_staff)
 def add_meta_data(request, pid):
     prod = Product.objects.get(id=pid)
-    ct = ContentType.objects.get_for_model(prod)
     if request.method == 'POST':
-        form = ProductMetaDataForm(request.POST)
+        form = DojoMetaDataForm(request.POST, instance=DojoMeta(product=prod))
         if form.is_valid():
-            cf, created = CustomField.objects.get_or_create(name=form.cleaned_data['name'], content_type=ct, field_type='a')
-            cf.save()
-            cfv, created = CustomFieldValue.objects.get_or_create(field=cf, object_id=prod.id)
-            cfv.value = form.cleaned_data['value']
-            cfv.clean()
-            cfv.save()
+            form.save()
             messages.add_message(request,
                                  messages.SUCCESS,
                                  'Metadata added successfully.',
@@ -690,9 +705,9 @@ def add_meta_data(request, pid):
             else:
                 return HttpResponseRedirect(reverse('view_product', args=(pid,)))
     else:
-        form = ProductMetaDataForm(initial={'content_type': prod})
+        form = DojoMetaDataForm()
 
-    product_tab = Product_Tab(pid, title="Add Custom Fields", tab="settings")
+    product_tab = Product_Tab(pid, title="Add Metadata", tab="settings")
 
     return render(request,
                   'dojo/add_product_meta_data.html',
@@ -705,22 +720,11 @@ def add_meta_data(request, pid):
 @user_passes_test(lambda u: u.is_staff)
 def edit_meta_data(request, pid):
     prod = Product.objects.get(id=pid)
-    ct = ContentType.objects.get_for_model(prod)
-
-    product_cf = CustomField.objects.filter(content_type=ct)
-    product_metadata = {}
-
-    for cf in product_cf:
-        cfv = CustomFieldValue.objects.filter(field=cf, object_id=prod.id)
-        if len(cfv):
-            product_metadata[cf] = cfv[0]
-
     if request.method == 'POST':
-        for key, value in request.POST.iteritems():
+        for key, value in request.POST.items():
             if key.startswith('cfv_'):
                 cfv_id = int(key.split('_')[1])
-                cfv = get_object_or_404(CustomFieldValue, id=cfv_id)
-
+                cfv = get_object_or_404(DojoMeta, id=cfv_id)
                 value = value.strip()
                 if value:
                     cfv.value = value
@@ -733,12 +737,11 @@ def edit_meta_data(request, pid):
                              extra_tags='alert-success')
         return HttpResponseRedirect(reverse('view_product', args=(pid,)))
 
-    product_tab = Product_Tab(pid, title="Edit Custom Fields", tab="settings")
+    product_tab = Product_Tab(pid, title="Edit Metadata", tab="settings")
     return render(request,
                   'dojo/edit_product_meta_data.html',
                   {'product': prod,
                    'product_tab': product_tab,
-                   'product_metadata': product_metadata,
                    })
 
 
@@ -768,9 +771,9 @@ def ad_hoc_finding(request, pid):
     jform = None
     form = AdHocFindingForm(initial={'date': timezone.now().date()})
     if get_system_setting('enable_jira'):
-            if JIRA_PKey.objects.filter(product=test.engagement.product).count() != 0:
-                enabled = JIRA_PKey.objects.get(product=test.engagement.product).push_all_issues
-                jform = JIRAFindingForm(enabled=enabled, prefix='jiraform')
+        if JIRA_PKey.objects.filter(product=test.engagement.product).count() != 0:
+            enabled = JIRA_PKey.objects.get(product=test.engagement.product).push_all_issues
+            jform = JIRAFindingForm(enabled=enabled, prefix='jiraform')
     else:
         jform = None
     if request.method == 'POST':
@@ -788,7 +791,7 @@ def ad_hoc_finding(request, pid):
             # always false now since this will be deprecated soon in favor of new Finding_Template model
             new_finding.is_template = False
             new_finding.save()
-            new_finding.endpoints = form.cleaned_data['endpoints']
+            new_finding.endpoints.set(form.cleaned_data['endpoints'])
             new_finding.save()
             if 'jiraform-push_to_jira' in request.POST:
                 jform = JIRAFindingForm(request.POST, prefix='jiraform', enabled=enabled)
@@ -915,13 +918,6 @@ def delete_engagement_presets(request, pid, eid):
     preset = get_object_or_404(Engagement_Presets, id=eid)
     form = DeleteEngagementPresetsForm(instance=preset)
 
-    from django.contrib.admin.utils import NestedObjects
-    from django.db import DEFAULT_DB_ALIAS
-
-    collector = NestedObjects(using=DEFAULT_DB_ALIAS)
-    collector.collect([preset])
-    rels = collector.nested()
-
     if request.method == 'POST':
         if 'id' in request.POST:
             form = DeleteEngagementPresetsForm(request.POST, instance=preset)
@@ -932,6 +928,10 @@ def delete_engagement_presets(request, pid, eid):
                                      'Engagement presets and engagement relationships removed.',
                                      extra_tags='alert-success')
                 return HttpResponseRedirect(reverse('engagement_presets', args=(pid,)))
+
+    collector = NestedObjects(using=DEFAULT_DB_ALIAS)
+    collector.collect([preset])
+    rels = collector.nested()
 
     product_tab = Product_Tab(pid, title="Delete Engagement Preset", tab="settings")
     return render(request, 'dojo/delete_presets.html',

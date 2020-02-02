@@ -20,6 +20,7 @@ def get_text_severity(severity_id):
     else:
         return 'Info'
 
+
 class NessusCSVParser(object):
     def __init__(self, filename, test):
         content = open(filename.temporary_file_path(), "rb").read().replace("\r", "\n")
@@ -72,7 +73,7 @@ class NessusCSVParser(object):
                         dat['endpoint'] = var
                         endpoint = Endpoint(host=var)
                     elif heading[i] == "Port":
-                        if var is not "None":
+                        if var != "None":
                             if dat['description'] is not None:
                                 dat['description'] = "Ports:"
                                 + var + "\n" + dat['description']
@@ -99,7 +100,9 @@ class NessusCSVParser(object):
                             dat['references'] = var
                     elif heading[i] == "Plugin Output":
                         dat['plugin_output'] = "\nPlugin output(" + \
-                                               dat['endpoint'] + "):" + str(var) + "\n"
+                                               dat['endpoint'] + \
+                                               "):\n```\n" + str(var) + \
+                                               "\n```\n"
 
                 if not dat['severity']:
                     dat['severity'] = "Info"
@@ -134,7 +137,7 @@ class NessusCSVParser(object):
                     find.unsaved_endpoints.append(endpoint)
         os.unlink(filename.temporary_file_path())
         os.unlink("%s-filtered" % filename.temporary_file_path())
-        self.items = dupes.values()
+        self.items = list(dupes.values())
 
 
 class NessusXMLParser(object):
@@ -170,13 +173,17 @@ class NessusXMLParser(object):
                         description = item.find("synopsis").text + "\n\n"
                     if item.findtext("plugin_output"):
                         plugin_output = "Plugin Output: " + ip + (
-                            (":" + port) if port is not None else "") + " " + item.find("plugin_output").text + "\n\n"
+                            (":" + port) if port is not None else "") + \
+                            " \n```\n" + item.find("plugin_output").text + \
+                            "\n```\n\n"
                         description += plugin_output
 
                     nessus_severity_id = int(item.attrib["severity"])
                     severity = get_text_severity(nessus_severity_id)
 
-                    impact = item.find("description").text + "\n\n"
+                    impact = ""
+                    if item.find("description"):
+                        impact = item.find("description").text + "\n\n"
                     if item.findtext("cvss_vector"):
                         impact += "CVSS Vector: " + item.find("cvss_vector").text + "\n"
                     if item.findtext("cvss_base_score"):
@@ -225,4 +232,4 @@ class NessusXMLParser(object):
                         find.unsaved_endpoints.append(Endpoint(host=fqdn,
                                                                protocol=protocol))
 
-        self.items = dupes.values()
+        self.items = list(dupes.values())

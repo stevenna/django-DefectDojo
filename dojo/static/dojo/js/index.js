@@ -77,13 +77,11 @@ function sidebar() {  // minimize side nav bar
         width = '175px';
         fontSize = '14px';
         speed = 100;
-        $('a#minimize-menu').attr('title', 'Collapse Menu');
     }
     else {
         action = 'min';
         remove = 'max';
         $.cookie('dojo-sidebar', 'min', {expires: 10000, path: '/'});
-        $('a#minimize-menu').attr('title', 'Expand Menu')
     }
 
     $('body').switchClass(remove, action);
@@ -230,4 +228,35 @@ function punchcard(element, data, ticks) {
         options);
 
 }
+
+function togglePassVisibility() {
+    var passwdInput = document.getElementById("id_password");
+    var toggleBox = document.getElementById("toggleBox");
+    
+    // swap password
+    if (passwdInput.type === "password") {
+        passwdInput.type = "text";
+        toggleBox.innerHTML = "<i class='fa fa-eye-slash'></i>\
+        <span><b>Hide Password</b></span>";
+    } else {
+        passwdInput.type = "password";
+        toggleBox.innerHTML = "<i class='fa fa-eye'></i>\
+        <span><b>Show Password</b></span>";
+    }
+} 
+
+function asciidocDownload() {
+    var content = document.getElementById('base-content')
+    var element = document.createElement('a');
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + 
+        encodeURIComponent(content.innerText.slice(16)));
+    element.setAttribute('download', 'asciidoc-report.txt');
+  
+    element.style.display = 'none';
+    document.body.appendChild(element);
+  
+    element.click();
+  
+    document.body.removeChild(element);
+  }
 

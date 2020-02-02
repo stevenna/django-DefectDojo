@@ -1,3 +1,13 @@
+# Docker container persistent data
+docker/data/
+docker/static/
+
+# docker-compose override symbolic link
+docker-compose.override.yml
+
+# VS Code
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -70,6 +80,7 @@ dojo/uploads/threat/*
 *.sqlite
 *.db
 celerybeat.pid
+*.env*
 
 weekly.txt
 Monthly.txt
@@ -91,3 +102,8 @@ dojo/media
 .venv/
 venv/
 ENV/
+quick.bash
+*.tgz
+
+#visual studio code
+*.code-workspace
